@@ -8,6 +8,7 @@ on:
   workflow_dispatch:
   schedule:
     - cron: 35 2 * * *
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -17,10 +18,10 @@ jobs:
         run: sleep $((RANDOM % 301))
 
       - name: 🔌 Check out code
-        uses: actions/checkout@main
+        uses: actions/checkout@v4
 
       - name: 🔨 Setup Node.js environment
-        uses: actions/setup-node@main
+        uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: npm
@@ -29,13 +30,13 @@ jobs:
         if: vars.debug == '1'
         run: |
           echo "CLOUD189_VERBOSE=1" >> $GITHUB_ENV
-      
+
       - name: 📹 Restore cached Cookie
         id: cache-cookie-restore
         uses: actions/cache/restore@v4
         with:
           path: .token
-          key: cloud189-token-${{ hashFiles('.token/*.json') }}
+          key: cloud189-token-${{ hashFiles('.token', '.token/**') }}
           restore-keys: cloud189-token-
 
       - name: 🔧 Init secrets
@@ -50,17 +51,33 @@ jobs:
         run: npm install
 
       - name: 🚀 Run
-        uses: nick-fields/retry@master
+        uses: nick-fields/retry@v3
         with:
           timeout_minutes: 30
           max_attempts: 3
           command: npm start
 
+      - name: 🔍 Debug token path
+        if: always()
+        run: |
+          echo "=== pwd ==="; pwd
+          echo "=== ls -la ==="; ls -la
+          echo "=== .token ==="; ls -la .token 2>/dev/null || echo ".token not found"
+          echo "=== candidate files ==="
+          find . -maxdepth 3 \( -name '*.json' -o -name '.token' -o -name '*.token' \) 2>/dev/null || true
+
       - name: 🔑 Compute token hash
         if: always()
         run: |
-          NEW_HASH=$(find .token -name '*.json' -exec sha256sum {} \; 2>/dev/null | sha256sum | cut -d' ' -f1)
+          if [ -f .token ]; then
+            NEW_HASH=$(sha256sum .token | cut -d' ' -f1)
+          elif [ -d .token ] && [ -n "$(find .token -type f 2>/dev/null | head -1)" ]; then
+            NEW_HASH=$(find .token -type f -exec sha256sum {} \; 2>/dev/null | sort | sha256sum | cut -d' ' -f1)
+          else
+            NEW_HASH=""
+          fi
           echo "TOKEN_HASH=${NEW_HASH}" >> $GITHUB_ENV
+          echo "Computed TOKEN_HASH=[${NEW_HASH}]"
 
       - name: 📹 Save cached Cookie
         if: always() && env.TOKEN_HASH != ''
@@ -80,7 +97,7 @@ jobs:
           git push
 
       - name: 🎉 Delete old workflow run
-        uses: Mattraks/delete-workflow-runs@main
+        uses: Mattraks/delete-workflow-runs@v2
         with:
           token: ${{ github.token }}
           repository: ${{ github.repository }}
